@@ -60,6 +60,7 @@ handle_binds() {
 	bind_select_up=$(tmux_option_or_fallback "@sessionx-bind-select-up" "ctrl-p")
 	bind_select_down=$(tmux_option_or_fallback "@sessionx-bind-select-down" "ctrl-n")
 
+	bind_new_session=$(tmux_option_or_fallback "@sessionx-bind-new-session" "ctrl-s")
 }
 
 handle_args() {
@@ -72,7 +73,7 @@ handle_args() {
 
 	TREE_MODE="$bind_tree_mode:change-preview(${SCRIPTS_DIR%/}/preview.sh -t {1})"
 	CONFIGURATION_MODE="$bind_configuration_mode:reload(find -L $CONFIGURATION_PATH -mindepth 1 -maxdepth 1 -type d -o -type l)+change-preview($LS_COMMAND {})"
-	WINDOWS_MODE="$bind_window_mode:reload(tmux list-windows -a -F '#{session_name}:#{window_name}')+change-preview(${SCRIPTS_DIR%/}/preview.sh -w {1})"
+	WINDOWS_MODE="$bind_window_mode:reload(tmux list-windows -a -F '#{session_name}:#{window_index} #{window_name}')+change-preview(${SCRIPTS_DIR%/}/preview.sh -w {1})"
 
 	NEW_WINDOW="$bind_new_window:reload(find -L $PWD -mindepth 1 -maxdepth 1 -type d -o -type l)+change-preview($LS_COMMAND {})"
 	ZO_WINDOW="$bind_zo:reload(zoxide query -l)+change-preview($LS_COMMAND {})"
@@ -91,7 +92,17 @@ handle_args() {
 	RENAME_SESSION_RELOAD='bash -c '\'' tmux list-sessions | sed -E "s/:.*$//"; '\'''
 	RENAME_SESSION="$bind_rename_session:execute($RENAME_SESSION_EXEC)+reload($RENAME_SESSION_RELOAD)"
 
-	HEADER="$bind_accept=󰿄  $bind_kill_session=󱂧  $bind_rename_session=󰑕  $bind_configuration_mode=󱃖  $bind_window_mode=   $bind_new_window=󰇘  $bind_back=󰌍  $bind_tree_mode=󰐆   $bind_scroll_up=  $bind_scroll_down= / $bind_zo="
+	SESSIONX_ACTION_FILE="/tmp/sessionx_action_\$\$"
+	NEW_SESSION="$bind_new_session:execute-silent(echo newsession > /tmp/sessionx_action)+accept"
+
+	HEADER_COMPACT="$bind_accept=󰿄  $bind_kill_session=󱂧  $bind_rename_session=󰑕  $bind_configuration_mode=󱃖  $bind_window_mode=   $bind_new_window=󰇘  $bind_back=󰌍  $bind_tree_mode=󰐆   $bind_scroll_up=  $bind_scroll_down= / $bind_zo="
+	HEADER_FULL="$bind_accept attach  $bind_new_session new+suffix  $bind_kill_session kill  $bind_rename_session rename  $bind_window_mode windows  $bind_tree_mode tree  $bind_new_window expand  $bind_configuration_mode config  $bind_back back  $bind_zo zoxide"
+	header_compact=$(tmux_option_or_fallback "@sessionx-header-compact" "off")
+	if [[ "$header_compact" == "on" ]]; then
+		HEADER=$'\n'"$HEADER_COMPACT"
+	else
+		HEADER=$'\n'"$HEADER_FULL"
+	fi
 	if is_fzf-marks_enabled; then
 		HEADER="$HEADER  $(get_fzf-marks_keybind)=󰣉"
 	fi
@@ -118,6 +129,7 @@ handle_args() {
 		--bind "$SCROLL_UP"
 		--bind "$SCROLL_DOWN"
 		--bind "$RENAME_SESSION"
+		--bind "$NEW_SESSION"
 		--bind '?:toggle-preview'
 		--bind 'change:first'
 		--exit-0
@@ -163,6 +175,8 @@ handle_extra_options() {
 	tmux set-option -g @sessionx-_custom-paths-subdirectories "$(tmux_option_or_fallback "@sessionx-custom-paths-subdirectories" "false")"
 	tmux set-option -g @sessionx-_git-branch "$(tmux_option_or_fallback "@sessionx-git-branch" "off")"
 	tmux set-option -g @sessionx-_fzf-builtin-tmux "$FZF_BUILTIN_TMUX"
+	tmux set-option -g @sessionx-_bind-new-session "$bind_new_session"
+	tmux set-option -g @sessionx-_header-compact "$HEADER_COMPACT"
 }
 
 preview_settings

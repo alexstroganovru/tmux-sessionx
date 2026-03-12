@@ -3,6 +3,27 @@
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CURRENT="$(tmux display-message -p '#S')"
 Z_MODE="off"
+SESSIONX_HEADER_COMPACT=""
+
+for arg in "$@"; do
+	case "$arg" in
+		-c|--compact) SESSIONX_HEADER_COMPACT=1 ;;
+	esac
+done
+
+resolve_session_name() {
+	local name="$1"
+	local base="${name%-s[0-9]*}"
+	if ! tmux has-session -t="$base" 2>/dev/null; then
+		echo "$base"
+		return
+	fi
+	local i=1
+	while tmux has-session -t="${base}-s${i}" 2>/dev/null; do
+		((i++))
+	done
+	echo "${base}-s${i}"
+}
 
 source "$CURRENT_DIR/tmuxinator.sh"
 source "$CURRENT_DIR/fzf-marks.sh"
@@ -93,6 +114,38 @@ handle_output() {
 		exit 0
 	fi
 
+	# ctrl-s: create new session with auto-suffix
+	if [[ -f /tmp/sessionx_action ]]; then
+		local action
+		action=$(cat /tmp/sessionx_action)
+		rm -f /tmp/sessionx_action
+		if [[ "$action" == "newsession" ]]; then
+			local sname sdir
+			if test -d "$target"; then
+				sname="$(basename "$target" | tr -d '.')"
+				sdir="$target"
+			else
+				sname="$target"
+				if tmux has-session -t="$sname" 2>/dev/null; then
+					sdir=$(tmux display-message -t "$sname" -p '#{session_path}')
+				fi
+			fi
+			local resolved
+			resolved=$(resolve_session_name "$sname")
+			if [[ -n "$sdir" ]]; then
+				tmux new-session -ds "$resolved" -c "$sdir"
+			else
+				tmux new-session -ds "$resolved"
+			fi
+			if [[ -n "$SESSIONX_DIRECT" ]]; then
+				tmux attach-session -t "$resolved"
+			else
+				tmux switch-client -t "$resolved"
+			fi
+			exit 0
+		fi
+	fi
+
 	if ! tmux has-session -t="$target" 2>/dev/null; then
 		if is_tmuxinator_enabled && is_tmuxinator_template "$target"; then
 			tmuxinator start "$target"
@@ -112,7 +165,11 @@ handle_output() {
 			fi
 		fi
 	fi
-	tmux switch-client -t "$target"
+	if [[ -n "$SESSIONX_DIRECT" ]]; then
+		tmux attach-session -t "$target"
+	else
+		tmux switch-client -t "$target"
+	fi
 
 	exit 0
 }
@@ -136,6 +193,16 @@ run_plugin() {
 	Z_MODE=$(tmux_option_or_fallback "@sessionx-zoxide-mode" "off")
 	eval $(tmux show-option -gqv @sessionx-_built-args)
 	eval $(tmux show-option -gqv @sessionx-_built-fzf-opts)
+
+	# -c/--compact: override header (last --header wins in fzf)
+	if [[ -n "$SESSIONX_HEADER_COMPACT" ]]; then
+		local ch
+		ch=$(tmux show-option -gqv @sessionx-_header-compact)
+		if [[ -n "$ch" ]]; then
+			args+=(--header "$ch")
+		fi
+	fi
+
 	handle_input
 	args+=(--bind "$BACK")
 
@@ -148,12 +215,23 @@ run_plugin() {
 	fi
 
 	FZF_BUILTIN_TMUX=$(tmux show-option -gqv @sessionx-_fzf-builtin-tmux)
-	if [[ "$FZF_BUILTIN_TMUX" == "on" ]]; then
+	if [[ -n "$SESSIONX_DIRECT" ]]; then
+		# Direct mode: plain fzf, filter out -p/--tmux size args
+		local direct_args=()
+		local skip_next=false
+		for arg in "${args[@]}"; do
+			if $skip_next; then skip_next=false; continue; fi
+			if [[ "$arg" == "-p" || "$arg" == "--tmux" ]]; then skip_next=true; continue; fi
+			direct_args+=("$arg")
+		done
+		RESULT=$(echo -e "${INPUT}" | sed -E 's/✗/ /g' | fzf "${fzf_opts[@]}" "${direct_args[@]}" | tail -n1)
+	elif [[ "$FZF_BUILTIN_TMUX" == "on" ]]; then
 		RESULT=$(echo -e "${INPUT}" | sed -E 's/✗/ /g' | fzf "${fzf_opts[@]}" "${args[@]}" | tail -n1)
 	else
 		RESULT=$(echo -e "${INPUT}" | sed -E 's/✗/ /g' | fzf-tmux "${fzf_opts[@]}" "${args[@]}" | tail -n1)
 	fi
 }
 
+rm -f /tmp/sessionx_action
 run_plugin
 handle_output "$RESULT"
